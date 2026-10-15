@@ -17,9 +17,7 @@
   <a href="#repository-structure">Repository Structure</a>
 </p>
 
-Reinforcement learning lets a language model improve text-to-image generation by rewriting prompts for a frozen image generator. Existing methods usually apply one image-level signal to every subword token, even though objects, counts, attributes, and relations form coherent spans. SCOPE is a GRPO objective that follows this structure. The rewriter emits an enhanced prompt together with its semantic partition. SCOPE pools policy log-probability shifts inside each span, assigns one coefficient to the tokens in that span, and keeps a single advantage for the completion. It does not need a separate span reward or extra image renders.
-
-Across Qwen-Image, SD3, and FLUX.1-dev, SCOPE improves on vanilla GRPO by 9.48% on GenEval and 7.62% on T2I-CompBench, measured as average relative gain. Ablations show that both the semantic boundaries and the pooling inside spans contribute to these gains.
+Reinforcement learning lets a language model improve text-to-image generation by rewriting prompts for a frozen image generator. Existing methods usually apply one image-level signal to every subword token, even though objects, counts, attributes, and relations form coherent spans. SCOPE is a GRPO objective that follows this structure.
 
 <a id="highlights"></a>
 ## Highlights
