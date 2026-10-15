@@ -4,12 +4,6 @@
   <a href="https://github.com/MAC-AutoML/SCOPE">
     <img src="https://img.shields.io/badge/GitHub-MAC--AutoML%2FSCOPE-181717?logo=github&logoColor=white" alt="GitHub">
   </a>
-  <a href="https://huggingface.co/Qwen/Qwen3-8B">
-    <img src="https://img.shields.io/badge/Rewriter-Qwen3--8B-FFD21E?logo=huggingface&logoColor=black" alt="Qwen3-8B">
-  </a>
-  <a href="https://huggingface.co/Qwen/Qwen-Image">
-    <img src="https://img.shields.io/badge/Renderer-Qwen--Image-FFD21E?logo=huggingface&logoColor=black" alt="Qwen-Image">
-  </a>
   <a href="https://www.python.org/downloads/">
     <img src="https://img.shields.io/badge/Python-3.10-3776AB?logo=python&logoColor=white" alt="Python 3.10">
   </a>
@@ -23,26 +17,22 @@
   <a href="#repository-structure">Repository Structure</a>
 </p>
 
-SCOPE trains a prompt rewriter on top of a frozen text-to-image renderer. The rewriter is [Qwen3-8B](https://huggingface.co/Qwen/Qwen3-8B). The renderer is [Qwen-Image](https://huggingface.co/Qwen/Qwen-Image). Image alignment is scored by [GenEval](https://github.com/djghosh13/geneval) with Mask2Former and OpenAI CLIP. Policy updates follow TRL 0.24 GRPO, with the token advantage reweighted by semantic spans.
-
-The rewriter emits:
+SCOPE trains a prompt rewriter while the text-to-image renderer stays frozen. The rewriter is [Qwen3-8B](https://huggingface.co/Qwen/Qwen3-8B). The renderer is [Qwen-Image](https://huggingface.co/Qwen/Qwen-Image). Alignment is scored by [GenEval](https://github.com/djghosh13/geneval). Updates follow TRL 0.24 GRPO, with the token advantage reweighted by semantic spans.
 
 ```text
 <answer>phrase 1 | phrase 2 | phrase 3</answer>
 ```
 
-`|` marks span boundaries. Before rendering, the trainer removes the tags and the bars and joins the phrases with a single space.
-
-<br>
+`|` is only a span boundary. Before rendering, tags and bars are removed and the phrases are joined with one space.
 
 <a id="highlights"></a>
 ## Highlights
 
 <p align="center">
-<img src="assets/motivation.png" width="92%" alt="Uniform token GRPO versus SCOPE span credit on a compositional rewrite.">
+  <img src="assets/motivation.png" width="100%" alt="Uniform token GRPO versus SCOPE span credit.">
+  <br>
+  <sub>One shared advantage, copied onto tokens in GRPO and modulated by semantic span in SCOPE.</sub>
 </p>
-
-<p align="center"><i>Uniform token GRPO copies one advantage onto every token. SCOPE keeps that advantage and modulates it by semantic span.</i></p>
 
 | Piece | What it does |
 | --- | --- |
@@ -56,7 +46,9 @@ The rewriter emits:
 <summary><b>How a training step works</b></summary>
 
 <p align="center">
-<img src="assets/pipeline.png" width="95%" alt="SCOPE pipeline: the rewriter emits spans, the frozen renderer scores the cleaned prompt, and span coefficients reweight the shared advantage.">
+  <img src="assets/pipeline.png" width="100%" alt="SCOPE pipeline from rewrite spans to a frozen renderer and a reweighted advantage.">
+  <br>
+  <sub>Spans are removed before rendering. Coefficients reweight the shared advantage and stay detached from the gradient.</sub>
 </p>
 
 1. Sample `N-1` rewrites (`N` defaults to 8). Set member `N` to the original prompt and its advantage to 0.
@@ -73,14 +65,14 @@ The default learning rate is `1e-6` and the maximum completion length is 512 tok
 <details>
 <summary><b>Qualitative results</b></summary>
 
-Each row compares the original prompt, GRPO, gpt-image 2, the SCOPE rewrite, and the SCOPE image. The dashed frame marks the rewrite and the SCOPE output.
+Columns, from left to right: original prompt, GRPO, gpt-image 2, the SCOPE rewrite, and the SCOPE image. The dashed frame marks the rewrite and the SCOPE output.
 
 <p align="center">
-<img src="assets/qualitative_main.png" width="92%" alt="Qualitative comparison on a person with an apple, a couch below a cup, four handbags, and a white orange.">
+  <img src="assets/qualitative_main.png" width="100%" alt="Qualitative comparison on a person with an apple, a couch below a cup, four handbags, and a white orange.">
 </p>
 
 <p align="center">
-<img src="assets/qualitative_extra.png" width="92%" alt="Qualitative comparison on two backpacks, four dogs, a bird below a skateboard, and three cell phones.">
+  <img src="assets/qualitative_extra.png" width="100%" alt="Qualitative comparison on two backpacks, four dogs, a bird below a skateboard, and three cell phones.">
 </p>
 
 </details>
