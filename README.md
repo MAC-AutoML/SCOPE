@@ -1,68 +1,94 @@
-# SCOPE
+<h1 align="center">SCOPE: Span-Credit Prompt Rewriting for Frozen Text-to-Image Models</h1>
 
-SCOPE 在冻结的文生图模型上训练一个提示词改写器。改写器是 [Qwen/Qwen3-8B](https://huggingface.co/Qwen/Qwen3-8B)，渲染器是 [Qwen/Qwen-Image](https://huggingface.co/Qwen/Qwen-Image)，图像对齐分数来自 [GenEval](https://github.com/djghosh13/geneval) 的 Mask2Former 与 OpenAI CLIP。策略优化沿用 TRL 0.24 的 GRPO，信用分配改成按语义片段加权。
+<p align="center">
+  <a href="https://github.com/MAC-AutoML/SCOPE">
+    <img src="https://img.shields.io/badge/GitHub-MAC--AutoML%2FSCOPE-181717?logo=github&logoColor=white" alt="GitHub">
+  </a>
+  <a href="https://huggingface.co/Qwen/Qwen3-8B">
+    <img src="https://img.shields.io/badge/Rewriter-Qwen3--8B-FFD21E?logo=huggingface&logoColor=black" alt="Qwen3-8B">
+  </a>
+  <a href="https://huggingface.co/Qwen/Qwen-Image">
+    <img src="https://img.shields.io/badge/Renderer-Qwen--Image-FFD21E?logo=huggingface&logoColor=black" alt="Qwen-Image">
+  </a>
+  <a href="https://www.python.org/downloads/">
+    <img src="https://img.shields.io/badge/Python-3.10-3776AB?logo=python&logoColor=white" alt="Python 3.10">
+  </a>
+</p>
 
-改写器把用户提示词写成：
+<p align="center">
+  <a href="#highlights">Highlights</a> ·
+  <a href="#installation">Installation</a> ·
+  <a href="#quick-start">Quick Start</a> ·
+  <a href="#configuration">Configuration</a> ·
+  <a href="#repository-structure">Repository Structure</a>
+</p>
+
+SCOPE trains a prompt rewriter on top of a frozen text-to-image renderer. The rewriter is [Qwen3-8B](https://huggingface.co/Qwen/Qwen3-8B). The renderer is [Qwen-Image](https://huggingface.co/Qwen/Qwen-Image). Image alignment is scored by [GenEval](https://github.com/djghosh13/geneval) with Mask2Former and OpenAI CLIP. Policy updates follow TRL 0.24 GRPO, with the token advantage reweighted by semantic spans.
+
+The rewriter emits:
 
 ```text
 <answer>phrase 1 | phrase 2 | phrase 3</answer>
 ```
 
-`|` 只是片段边界。送进渲染器之前会去掉标签和 `|`，把片段用空格拼回去。
+`|` marks span boundaries. Before rendering, the trainer removes the tags and the bars and joins the phrases with a single space.
 
-## 算法流程
+<br>
 
-一组大小为 `N`（默认 8）。前 `N-1` 条由当前策略 `π_θ` 采样，第 `N` 条是原始提示词，不参与参数更新。同一组共用一个扩散种子。
+<a id="highlights"></a>
+## Highlights
 
-1. 清洗改写结果，用 Qwen-Image 生成 512×512 图片（20 步，CFG 4.0）。GenEval 给出 0 或 1。
-2. 改写的格式奖励是 `+0.25` 或 `-0.25`，检查是否正好有一段可切分的 `<answer>`。原始提示词这条的格式奖励固定为 `+0.25`。
-3. 混合奖励 `r = w_t2i * r_image + w_fmt * r_fmt`，两项权重默认都是 1。
-4. 混合优势：原始提示词的优势为 0。它的奖励低于阈值 `τ`（默认 1）时，改写的优势是 `clip(r - r_N, -c, c)`。否则用这 `N-1` 条的组内 z-score，再裁到 `[-c, c]`。`c` 默认 3，标准差分母上的 `ε` 默认 `1e-6`。
-5. `π_old` 是上一轮优化器更新后的参数拷贝。第一步它和当前策略相同。token 对数比是 `log π_θ - log π_old`。
-6. 每个语义片段里对对数比取平均，得到 `clip(exp(β * 平均), 0.8, 1.2)`，再把片段内 token 的权重归一化到均值 1。`β` 默认 1。`<answer>` 标签和 `|` 的权重保持 1。格式不合法、被截断，或某个 token 同时跨过片段和 `|` 时，整条退回全 1 权重。
-7. 权重从计算图里断开。PPO 裁剪只作用在概率比上。TRL 0.24 未改配置时 `epsilon` 为 0.2，概率比限制在 0.8 到 1.2。一条 completion 先对 token 求和，再只对 `N-1` 条改写取平均。KL 指向训练开始时冻结的参考模型，系数 `beta=0.01`。`π_old` 是上一轮更新后的滞后拷贝，两者分开保存。
+<p align="center">
+<img src="assets/motivation.png" width="92%" alt="Uniform token GRPO versus SCOPE span credit on a compositional rewrite.">
+</p>
 
-默认学习率 `1e-6`，补全最长 512 token。多卡训练使用 `configs/ds_zero2_bf16.json` 的 DeepSpeed ZeRO-2。
+<p align="center"><i>Uniform token GRPO copies one advantage onto every token. SCOPE keeps that advantage and modulates it by semantic span.</i></p>
 
-## 代码
+| Piece | What it does |
+| --- | --- |
+| Grouped rollout | For each prompt, sample `N-1` rewrites from `π_θ` and append the original prompt as member `N`. The original prompt is scored and used in the advantage, and it is left out of the parameter update. |
+| Frozen render and score | One shared diffusion seed per group. Qwen-Image renders 512×512 images (20 steps, CFG 4.0). GenEval returns 0 or 1. |
+| Hybrid advantage | If the original-prompt reward is below `τ` (default 1), use a clipped reward gap. Otherwise use a clipped group z-score over the `N-1` rewrites. |
+| Span credit | Pool `log π_θ − log π_old` inside each phrase, clip the span coefficient to `[0.8, 1.2]`, and normalize phrase-token weights to mean 1. Tags and `\|` keep weight 1. |
+| Lagged policy | `π_old` is a frozen copy from the previous optimizer step. On step 1 it matches `π_θ`, so every span weight is 1. |
 
-| 路径 | 作用 |
-|---|---|
-| `src/train.py` | `SCOPETrainer`。采样 `N-1` 条改写并插入原始提示词，调用奖励服务，计算混合优势和 span 权重，再做裁剪更新。 |
-| `src/scope_credit.py` | 纯 Python 的清洗、片段切分、格式奖励、混合优势、span 权重。不依赖 PyTorch。 |
-| `src/reward_client.py` | 训练进程访问奖励服务的 HTTP 客户端。组内种子由 `stable_group_seed` 生成后随请求发送。 |
-| `src/reward_server.py` | 奖励协调。按组把清洗后的文本发给图像服务，再把图片发给 GenEval，返回 0/1。 |
-| `src/image_server.py` | Qwen-Image 的 FastAPI 服务。启动时从本地目录加载，不在线下载。 |
-| `src/geneval_reward_server.py` | Mask2Former 检测加 CLIP 颜色分类，按 GenEval 元数据打 0/1。 |
-| `src/geneval_backend.py` | 把 MMCV 多尺度变形注意力换成 PyTorch 实现，供新 GPU 使用。 |
-| `src/service_auth.py` | 图像和评分服务共用的 Bearer token。启动器为每次作业生成 token。 |
-| `src/model_paths.py` | 把环境变量或 `MODEL_ROOT` 解析成本地模型目录和权重文件。 |
-| `src/launch.py` | 按节点拉起环境、图像服务、GenEval、奖励服务和训练，并在作业结束时清理本作业的进程组。 |
-| `configs/ds_zero2_bf16.json` | ZeRO-2、bf16。 |
-| `eval/geneval/` | GenEval 上游评测代码和 `prompts/evaluation_metadata.jsonl`。检测权重改由 `src/model_paths.py` 解析。 |
-| `eval/T2I-CompBench/` | T2I-CompBench / T2I-CompBench++ 上游仓库。提示词在 `examples/dataset/`，评测脚本在 `BLIPvqa_eval/`、`CLIPScore_eval/`、`UniDet_eval/`、`3_in_1_eval/` 和 `MLLM_eval/`。 |
-| `data/geneval/train_metadata.jsonl` | 默认训练数据。每行包含 `prompt`、`tag`、`include`，计数类样本另有 `exclude`。 |
-| `data/geneval/t2i_compbench_train_metadata.jsonl` | 补充训练记录，字段与上一文件相同，并带 `source`、`source_index`。评分同样走 GenEval。 |
-| `data/T2I-CompBench/` | 从该 benchmark 抽出的训练提示词文本，内容对应 `eval/T2I-CompBench/examples/dataset/` 里的 `*_train.txt`。 |
-| `scripts/start.sh` | 8 机完整训练的唯一入口。每台机器都执行它。 |
+<details>
+<summary><b>How a training step works</b></summary>
 
-`src/launch.py` 的机器分工是固定的。每台机器需要 8 张可见 GPU。节点 0 和 1 训练，共 16 张 GPU。节点 2 到 6 每张卡一个图像服务。节点 7 每张卡一个 GenEval 服务，并在本机再起一个奖励协调服务。
+<p align="center">
+<img src="assets/pipeline.png" width="95%" alt="SCOPE pipeline: the rewriter emits spans, the frozen renderer scores the cleaned prompt, and span coefficients reweight the shared advantage.">
+</p>
 
-## 环境复现
+1. Sample `N-1` rewrites (`N` defaults to 8). Set member `N` to the original prompt and its advantage to 0.
+2. Clean each rewrite. A valid `<answer>` partition receives format reward `+0.25`; any other rewrite receives `-0.25`. The original prompt uses a fixed format reward of `+0.25`.
+3. Mix the rewards with `r = w_t2i * r_image + w_fmt * r_fmt`. Both weights default to 1.
+4. If `r_N < τ`, set `A = clip(r − r_N, −c, c)`. Otherwise set `A` to the clipped z-score of the `N-1` rewrites. Defaults are `c = 3` and `ε = 1e-6`.
+5. Build span weights from the mean log-ratio inside each phrase: `clip(exp(β * mean), 0.8, 1.2)`, then normalize. `β` defaults to 1. A malformed, truncated, or misaligned completion falls back to weight 1 on every token.
+6. Detach the weights. Clip only the probability ratio. Sum token losses inside a completion, then average over the `N-1` rewrites. An optional KL term uses the frozen initial reference with `beta = 0.01`. That reference is separate from `π_old`.
 
-当前安装入口是 `env/roles/`。三个角色各自使用一个虚拟环境。
+The default learning rate is `1e-6` and the maximum completion length is 512 tokens. Multi-GPU training uses DeepSpeed ZeRO-2 from `configs/ds_zero2_bf16.json`.
 
-| 文件 | 内容 |
-|---|---|
-| `env/roles/setup_env.sh` | 用 `uv` 创建 `.venvs/train`、`.venvs/image`、`.venvs/geneval`。 |
-| `env/roles/requirements-train.txt` | PyTorch 2.8、transformers 4.57.3、trl 0.24.0、DeepSpeed、PEFT。 |
-| `env/roles/requirements-image.txt` | PyTorch 2.8、diffusers 0.36、FastAPI。 |
-| `env/roles/requirements-geneval.txt` | PyTorch 2.0.1+cu118、mmcv-full 1.7.2、mmdet 2.28.2、open_clip。 |
-| `env/roles/setup_native_libs.sh` | 为 OpenCV 下载 `libGL`，解压到 `.native`。 |
-| `env/roles/README.md` | 锁、wheel 索引和注意力后端的说明。 |
-| `env/env.example.txt` | 启动 `scripts/start.sh` 时可复制的环境变量。 |
+</details>
 
-在 Linux x86_64、带 NVIDIA GPU 的机器上，从仓库根目录执行：
+<details>
+<summary><b>Qualitative results</b></summary>
+
+Each row compares the original prompt, GRPO, gpt-image 2, the SCOPE rewrite, and the SCOPE image. The dashed frame marks the rewrite and the SCOPE output.
+
+<p align="center">
+<img src="assets/qualitative_main.png" width="92%" alt="Qualitative comparison on a person with an apple, a couch below a cup, four handbags, and a white orange.">
+</p>
+
+<p align="center">
+<img src="assets/qualitative_extra.png" width="92%" alt="Qualitative comparison on two backpacks, four dogs, a bird below a skateboard, and three cell phones.">
+</p>
+
+</details>
+
+<a id="installation"></a>
+## 1. Installation
+
+Linux x86_64 with NVIDIA GPUs. Python 3.10. The three roles use separate virtual environments under `.venvs/`.
 
 ```bash
 bash env/roles/setup_env.sh train
@@ -70,52 +96,53 @@ bash env/roles/setup_env.sh image
 bash env/roles/setup_env.sh geneval
 ```
 
-默认 Python 3.10，包索引是 PyPI。需要换解释器或镜像时：
+`src/launch.py` runs the same installer at job start. If the requirements file is unchanged and `.venvs/<role>/.ready` exists, installation is skipped.
 
-```bash
-export SCOPE_PYTHON=/path/to/python3.10
-export SCOPE_PYPI_INDEX=https://pypi.org/simple
-```
+| Role | Pinned stack |
+| --- | --- |
+| `train` | PyTorch 2.8, transformers 4.57.3, trl 0.24.0, DeepSpeed, PEFT |
+| `image` | PyTorch 2.8, diffusers 0.36, FastAPI |
+| `geneval` | PyTorch 2.0.1+cu118, mmcv-full 1.7.2, mmdet 2.28.2, open_clip |
 
-GenEval 的 `mmcv-full` 从 OpenMMLab 的 cu118 / torch2.0 预编译索引安装。换地址时设置 `MMCV_WHEEL_INDEX`。`requirements-geneval.txt` 里的 PyTorch 轮子指向 `download.pytorch.org`；访问不到时，把这两行改成同一个版本的镜像 URL。
+The package index is PyPI. Point `SCOPE_PYTHON` at another 3.10 interpreter, or `SCOPE_PYPI_INDEX` at a mirror. `mmcv-full` comes from the OpenMMLab cu118 / torch2.0 wheel index (`MMCV_WHEEL_INDEX`). The PyTorch wheels in `env/roles/requirements-geneval.txt` point at `download.pytorch.org`. GenEval also needs `libGL`, which `env/roles/setup_native_libs.sh` unpacks into `.native`.
 
-`src/launch.py` 在作业开始时也会调用 `env/roles/setup_env.sh`。依赖没变且 `.ready` 已写好时，安装会直接跳过。
+<a id="quick-start"></a>
+## 2. Quick Start
 
-## 模型
+### 2.1 Place the local weights
 
-权重放在 `MODEL_ROOT` 下，默认是仓库里的 `models/`。训练启动后只读本地文件。按下面的相对路径自行放好：
+`MODEL_ROOT` defaults to `models/`. Training reads only local files.
 
-| 环境变量 | 默认相对路径 | 来源 |
-|---|---|---|
-| `MODEL_PATH` | `Qwen/Qwen3-8B/`（目录，内含 `config.json`） | Hugging Face `Qwen/Qwen3-8B` |
-| `MODEL_NAME` | `Qwen/Qwen-Image/`（目录，内含 `model_index.json`） | Hugging Face `Qwen/Qwen-Image` |
+| Variable | Path under `MODEL_ROOT` | Source |
+| --- | --- | --- |
+| `MODEL_PATH` | `Qwen/Qwen3-8B/` (`config.json`) | [Qwen/Qwen3-8B](https://huggingface.co/Qwen/Qwen3-8B) |
+| `MODEL_NAME` | `Qwen/Qwen-Image/` (`model_index.json`) | [Qwen/Qwen-Image](https://huggingface.co/Qwen/Qwen-Image) |
 | `GENEVAL_MODEL_PATH` | `mmdet/mask2former/mask2former_swin-s-p4-w7-224_lsj_8x2_50e_coco_20220504_001756-743b7d99.pth` | OpenMMLab MMDetection |
 | `CLIP_LOCAL_PATH` | `openai/clip-vit-large-patch14/ViT-L-14.pt` | OpenAI CLIP ViT-L/14 |
 
-目录模型也可以放在该路径下唯一的一个版本子目录里。有多个版本时，用对应环境变量指向要使用的那一份。训练进程只读取已经放好的本地文件。`GENEVAL_MODEL_PATH` 和 `CLIP_LOCAL_PATH` 指向权重文件；`MODEL_PATH` 和 `MODEL_NAME` 指向模型目录。
-
-两个 Qwen 目录来自 Hugging Face 的 `Qwen/Qwen3-8B` 和 `Qwen/Qwen-Image`。CLIP 权重是 OpenAI 的 `ViT-L-14.pt`：
-
-```text
-https://openaipublic.azureedge.net/clip/models/b8cca3fd41ae0c99ba7e8951adf17d267cdb84cd88be6f7c2e0eca1737a03836/ViT-L-14.pt
-```
-
-Mask2Former 权重用下面的命令下载到上表的路径。配置文件来自已安装的 `mmdet` 包；自动找不到时设置 `GENEVAL_MODEL_CONFIG`。
+`MODEL_PATH` and `MODEL_NAME` are directories. `GENEVAL_MODEL_PATH` and `CLIP_LOCAL_PATH` are weight files. A directory model may also sit in exactly one snapshot subdirectory. If more than one snapshot is present, set the variable explicitly.
 
 ```bash
+# OpenAI CLIP ViT-L/14
+# https://openaipublic.azureedge.net/clip/models/b8cca3fd41ae0c99ba7e8951adf17d267cdb84cd88be6f7c2e0eca1737a03836/ViT-L-14.pt
+
 bash eval/geneval/evaluation/download_models.sh \
   models/mmdet/mask2former/mask2former_swin-s-p4-w7-224_lsj_8x2_50e_coco_20220504_001756-743b7d99.pth
-```
 
-放好之后检查解析结果：
-
-```bash
 python3 src/model_paths.py
 ```
 
-## 启动
+The Mask2Former config is taken from the installed `mmdet` package. Set `GENEVAL_MODEL_CONFIG` when that lookup fails.
 
-先把四个模型放到 `MODEL_ROOT`。参数示例见 `env/env.example.txt`。每台机器使用同一个 `SCOPE_JOB_ID` 和同一份 8 个地址的 `SCOPE_NODE_IPS`，并用 `SCOPE_NODE_RANK` 标明自己是第几台（0 到 7）：
+### 2.2 Launch the eight-node job
+
+Every node needs 8 visible GPUs and the same `SCOPE_JOB_ID` and `SCOPE_NODE_IPS`. `SCOPE_NODE_RANK` is this node's index, from 0 to 7.
+
+| Nodes | Role |
+| --- | --- |
+| 0–1 | Training, 16 GPUs in total |
+| 2–6 | One Qwen-Image server per GPU |
+| 7 | One GenEval server per GPU, plus the reward coordinator |
 
 ```bash
 export SCOPE_JOB_ID=SCOPE-run1
@@ -125,9 +152,13 @@ export SCOPE_OUTPUT_ROOT=/path/to/outputs
 bash scripts/start.sh
 ```
 
-常用覆盖项：`DATA_PATH`、`NUM_GEN`、`PER_DEVICE_TRAIN_BATCH_SIZE`、`GRAD_ACC_STEPS`、`REWARD_TIMEOUT`、`SCOPE_STARTUP_TIMEOUT`。图像、GenEval、奖励端口默认从 18000、17000、15000 起，分别用 `SCOPE_IMAGE_PORT`、`SCOPE_GENEVAL_PORT`、`SCOPE_REWARD_PORT` 修改。
+`10.0.0.1`–`10.0.0.8` above are placeholders. Replace them with the eight worker addresses. Copy the rest of the variables from `env/env.example.txt`.
 
-也可以在奖励服务已经就绪时单独启动训练进程。未设置 `REWARD_ENDPOINTS` 时，它访问 `http://127.0.0.1:5000`。8 机启动器会把它设成节点 7 上的奖励端口，默认是 `15000`。
+Image, GenEval, and reward ports start at 18000, 17000, and 15000. Override them with `SCOPE_IMAGE_PORT`, `SCOPE_GENEVAL_PORT`, and `SCOPE_REWARD_PORT`.
+
+### 2.3 Train against an existing reward service
+
+Unset `REWARD_ENDPOINTS` and the trainer calls `http://127.0.0.1:5000`. The eight-node launcher sets that variable to port `15000` on node 7.
 
 ```bash
 .venvs/train/bin/python src/train.py \
@@ -137,15 +168,70 @@ bash scripts/start.sh
   --num_gen 8
 ```
 
-这条命令的每卡 batch 使用 `train.py` 的默认值 1。`scripts/start.sh` 使用 `PER_DEVICE_TRAIN_BATCH_SIZE`，默认 8。`--num_gen` 至少为 2。`--lora` 使用 r=8、alpha=16 的 LoRA。`--no_deepspeed` 关闭 ZeRO。`--max_steps` 和 `--max_samples` 用来截断试跑。
+This command uses `train.py`'s default per-device batch size of 1. `scripts/start.sh` passes `PER_DEVICE_TRAIN_BATCH_SIZE`, which defaults to 8. `--num_gen` must be at least 2. `--lora` enables LoRA with `r=8` and `alpha=16`. `--no_deepspeed` turns ZeRO off. `--max_steps` and `--max_samples` truncate a trial run.
 
-## 输出
+<details>
+<summary><b>Job outputs</b></summary>
 
-一次作业写到 `SCOPE_OUTPUT_ROOT/<SCOPE_JOB_ID>/`，未设置时就是 `outputs/<SCOPE_JOB_ID>/`。
+A job writes to `SCOPE_OUTPUT_ROOT/<SCOPE_JOB_ID>/`. Without `SCOPE_OUTPUT_ROOT`, that directory is `outputs/<SCOPE_JOB_ID>/`.
 
-- `logs/node-<rank>/`：安装、服务和训练日志
-- `generated_images/`：奖励服务保存的图片
-- `checkpoints/`：训练输出
-- `service.token`：仅本次作业使用，权限 0600，不要提交
+- `logs/node-<rank>/`: install, service, and training logs
+- `generated_images/`: images saved by the reward service
+- `checkpoints/`: trainer outputs
+- `service.token`: one token for this job, mode `0600`
 
-服务通过鉴权健康检查后才开始训练。图像生成、评分或存盘失败会使作业失败，并写一个 `FAILED` 标记。
+Training starts after the authenticated health checks pass. A failed generation, score, or save marks the job `FAILED` and stops it.
+
+</details>
+
+<a id="configuration"></a>
+## 3. Configuration
+
+| Setting | Default | What it controls |
+| --- | :---: | --- |
+| `NUM_GEN` | 8 | Group size, including the original prompt |
+| `PER_DEVICE_TRAIN_BATCH_SIZE` | 8 in `scripts/start.sh`, 1 in `train.py` | Prompts per GPU |
+| `GRAD_ACC_STEPS` | 1 | Gradient accumulation |
+| `DATA_PATH` | `data/geneval/train_metadata.jsonl` | Training JSONL |
+| `REWARD_TIMEOUT` | 1800 | Reward HTTP timeout, seconds |
+| `SCOPE_STARTUP_TIMEOUT` | 1800 | Time to wait for services, seconds |
+| `τ`, `c`, `ε`, `β` | 1, 3, `1e-6`, 1 | Hybrid advantage and span coefficient |
+| KL `beta` | 0.01 | Penalty toward the initial reference |
+| Learning rate | `1e-6` | Rewriter update |
+| Max completion length | 512 | Rewriter generation cap |
+
+<a id="repository-structure"></a>
+## 4. Repository Structure
+
+```text
+SCOPE/
+├── assets/                     # Figures from the paper
+├── src/
+│   ├── train.py                  # SCOPETrainer: rollout, advantage, span weights, update
+│   ├── scope_credit.py           # Cleaning, spans, format reward, advantages, weights
+│   ├── launch.py                 # Eight-node supervisor
+│   ├── model_paths.py            # Local snapshot resolution
+│   ├── reward_client.py          # Reward HTTP client
+│   ├── reward_server.py          # Render, then GenEval, one seed per group
+│   ├── image_server.py           # Local Qwen-Image server
+│   ├── geneval_reward_server.py  # Mask2Former + CLIP GenEval score
+│   ├── geneval_backend.py        # PyTorch fallback for MMCV attention
+│   └── service_auth.py           # Per-job bearer token
+├── scripts/start.sh              # Entry point, run on every node
+├── configs/ds_zero2_bf16.json    # DeepSpeed ZeRO-2, bf16
+├── env/
+│   ├── env.example.txt           # Variables for scripts/start.sh
+│   └── roles/                    # train / image / geneval installers
+├── data/
+│   ├── geneval/                  # Default training JSONL and GenEval-format T2I rows
+│   └── T2I-CompBench/            # Training prompt texts (*_train.txt)
+└── eval/
+    ├── geneval/                  # Upstream GenEval code and prompts
+    └── T2I-CompBench/            # Upstream T2I-CompBench / T2I-CompBench++
+```
+
+`data/geneval/train_metadata.jsonl` is the default training set. Each row has `prompt`, `tag`, and `include`. Counting samples also have `exclude`. `data/geneval/t2i_compbench_train_metadata.jsonl` adds `source` and `source_index` and is still scored with GenEval. The matching raw prompts are `data/T2I-CompBench/*_train.txt`.
+
+## 5. Acknowledgements
+
+Training uses [Qwen3-8B](https://huggingface.co/Qwen/Qwen3-8B), [Qwen-Image](https://huggingface.co/Qwen/Qwen-Image), [TRL](https://github.com/huggingface/trl) 0.24 GRPO, [GenEval](https://github.com/djghosh13/geneval), and [T2I-CompBench](https://github.com/Karine-Huang/T2I-CompBench). Upstream benchmark code under `eval/` keeps the licenses shipped with those projects.
