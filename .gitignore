@@ -1,0 +1,11 @@
+.venvs/
+.bootstrap/
+.native/
+.cache/
+models/
+outputs/
+__pycache__/
+*.py[cod]
+*.log
+service.token
+generated_images/
