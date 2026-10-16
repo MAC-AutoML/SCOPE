@@ -1,8 +1,11 @@
-<h1 align="center">SCOPE: Span-Credit Prompt Rewriting for Frozen Text-to-Image Models</h1>
+<h1 align="center">SCOPE: Semantic Bounded Credit Optimization for Prompt Engineering in Text-to-image Generation</h1>
 
 <p align="center">
   <a href="https://github.com/MAC-AutoML/SCOPE">
     <img src="https://img.shields.io/badge/GitHub-MAC--AutoML%2FSCOPE-181717?logo=github&logoColor=white" alt="GitHub">
+  </a>
+  <a href="https://arxiv.org/abs/2610.22264">
+    <img src="https://img.shields.io/badge/arXiv-2610.22264-b31b1b" alt="arXiv">
   </a>
   <a href="https://www.python.org/downloads/">
     <img src="https://img.shields.io/badge/Python-3.10-3776AB?logo=python&logoColor=white" alt="Python 3.10">
