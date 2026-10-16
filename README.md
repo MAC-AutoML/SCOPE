@@ -17,7 +17,8 @@
   <a href="#installation">Installation</a> /
   <a href="#quick-start">Quick Start</a> /
   <a href="#configuration">Configuration</a> /
-  <a href="#repository-structure">Repository Structure</a>
+  <a href="#repository-structure">Repository Structure</a> /
+  <a href="#citation">Citation</a>
 </p>
 
 Reinforcement learning lets a language model improve text-to-image generation by rewriting prompts for a frozen image generator. Existing methods usually apply one image-level signal to every subword token, even though objects, counts, attributes, and relations form coherent spans. SCOPE is a GRPO objective that follows this structure.
@@ -39,7 +40,7 @@ Reinforcement learning lets a language model improve text-to-image generation by
 | Span credit | Pool `log pi_theta - log pi_old` inside each phrase, clip the span coefficient to `[0.8, 1.2]`, and normalize phrase-token weights to mean 1. Tags and the vertical bar keep weight 1. |
 | Lagged policy | `pi_old` is a frozen copy from the previous optimizer step. On step 1 it matches `pi_theta`, so every span weight is 1. |
 
-<details>
+<details open>
 <summary><b>How a training step works</b></summary>
 
 <p align="center">
@@ -59,7 +60,7 @@ The default learning rate is `1e-6` and the maximum completion length is 512 tok
 
 </details>
 
-<details>
+<details open>
 <summary><b>Qualitative results</b></summary>
 
 Columns, from left to right: original prompt, GRPO, gpt-image 2, the SCOPE rewrite, and the SCOPE image. The dashed frame marks the rewrite and the SCOPE output.
@@ -224,3 +225,20 @@ SCOPE/
 ## 5. Acknowledgements
 
 Training uses [Qwen3-8B](https://huggingface.co/Qwen/Qwen3-8B), [Qwen-Image](https://huggingface.co/Qwen/Qwen-Image), [TRL](https://github.com/huggingface/trl) 0.24 GRPO, [GenEval](https://github.com/djghosh13/geneval), and [T2I-CompBench](https://github.com/Karine-Huang/T2I-CompBench). Upstream benchmark code under `eval/` keeps the licenses shipped with those projects.
+
+<a id="citation"></a>
+## 6. Citation
+
+If you use this repository, please cite the corresponding paper:
+
+```bibtex
+@misc{jiao2026scopesemanticboundedcredit,
+  title={SCOPE: Semantic Bounded Credit Optimization for Prompt Engineering in Text-to-image Generation},
+  author={Yufei Jiao and Jinfa Huang and Zeyue Xue and Tianyu Xie and Yuexiao Ma and Rongrong Ji and Xiawu Zheng and Jiebo Luo},
+  year={2026},
+  eprint={2610.22264},
+  archivePrefix={arXiv},
+  primaryClass={cs.CV},
+  url={https://arxiv.org/abs/2610.22264},
+}
+```
