@@ -224,7 +224,7 @@ SCOPE/
 
 ## 5. Acknowledgements
 
-Training uses [Qwen3-8B](https://huggingface.co/Qwen/Qwen3-8B), [Qwen-Image](https://huggingface.co/Qwen/Qwen-Image), [TRL](https://github.com/huggingface/trl) 0.24 GRPO, [GenEval](https://github.com/djghosh13/geneval), and [T2I-CompBench](https://github.com/Karine-Huang/T2I-CompBench). Upstream benchmark code under `eval/` keeps the licenses shipped with those projects.
+Training uses [Qwen3-8B](https://huggingface.co/Qwen/Qwen3-8B), [Qwen-Image](https://huggingface.co/Qwen/Qwen-Image), [Stable Diffusion 3](https://huggingface.co/stabilityai/stable-diffusion-3-medium), and [FLUX.1-dev](https://huggingface.co/black-forest-labs/FLUX.1-dev), together with [TRL](https://github.com/huggingface/trl) 0.24 GRPO, [GenEval](https://github.com/djghosh13/geneval), and [T2I-CompBench](https://github.com/Karine-Huang/T2I-CompBench). Upstream benchmark code under `eval/` keeps the licenses shipped with those projects.
 
 <a id="citation"></a>
 ## 6. Citation
